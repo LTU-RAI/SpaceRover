@@ -18,7 +18,7 @@ class PathSubscriber:
 
         # Robot state
         self.current_position = [0.0, 0.0]
-        self.threshold = 0.05
+        self.threshold = 0.10
 
         # Rate of control loop
         self.rate = rospy.Rate(10)  # 10 Hz
@@ -34,12 +34,19 @@ class PathSubscriber:
 
         twist = Twist()
         twist.linear.x = min(0.2, distance)
-        twist.angular.z = angle
+        twist.angular.z = 0.0
         return twist, distance
 
+    def stop(self):
+        cmd = Twist()
+        cmd.linear.x = 0.0
+        cmd.angular.z = 0.0
+        self.cmd_pub.publish(cmd)
+        
     def follow_path_loop(self):
         while not rospy.is_shutdown():
             if not self.latest_path:
+                self.stop()
                 self.rate.sleep()
                 continue
 
@@ -58,12 +65,16 @@ class PathSubscriber:
             self.current_position[1] += twist.linear.x * 0.1 * math.sin(twist.angular.z)
 
             self.rate.sleep()
+            
+            if not self.latest_path:
+                self.stop()
+                rospy.loginfo(f"Waypoint exhausted, Stopping robot")
+                break
 
     def path_callback(self, msg):
         self.latest_path = [(pose.pose.position.x, pose.pose.position.y) for pose in msg.poses]
         rospy.loginfo(f"Received {len(self.latest_path)} waypoints")
         rospy.loginfo(f"{self.latest_path}")
-
 
 if __name__ == "__main__":
     try:
