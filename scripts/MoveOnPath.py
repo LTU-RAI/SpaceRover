@@ -9,6 +9,9 @@ from bicycle_model import *
 LX16A.initialize("/dev/ttyUSB-Servo") # LX16A.initialize("/dev/ttyUSB0")
 
 ## Variables
+last_cmd_time = rospy.Time(0)
+CMD_TIMEOUT = rospy.Duration(0.5)  # seconds
+
 rad_to_deg = 180/math.pi
 deg_to_rad = math.pi/180
 wheel_circumference = 0.387 # [m]
@@ -45,25 +48,15 @@ except ServoTimeoutError as e:
   
 # get velocity commands
 def callback_vel(data):
-    global lin_velocity, ang_velocity, _v, _w
+    global lin_velocity, ang_velocity, last_cmd_time
     lin_velocity = data.linear.x
     ang_velocity = data.angular.z
-    
-    if _v == lin_velocity:
-    	lin_velocity = 0
-    else:
-    	lin_velocity = data.linear.x
+    last_cmd_time = rospy.Time.now()
 
-    if _w == ang_velocity:
-    	ang_velocity = 0
-    else:
-    	ang_velocity = data.angular.z
-
-    _v = lin_velocity
-    _w = ang_velocity
-    # for testing
-    rospy.loginfo(f"Recieved /cmd_vel data. lin_velocity: {lin_velocity}, ang_velocity: {ang_velocity}")
-    
+    rospy.loginfo(
+        f"Received /cmd_vel lin={lin_velocity:.3f}, ang={ang_velocity:.3f}"
+    )
+ 
 # set wheel steering angle
 def set_wheel_pos(angle, throttle):
     steerLF.move(150 - angle['front_left'],throttle)		# straight: 150
@@ -141,13 +134,19 @@ def set_wheel_state(wheel_steer, wheel_velocity):
     rospy.loginfo(f'max_steer: {abs(max_steer)}, wheel_steer: {wheel_steer}')
     return wheel_steer, wheel_velocity
     
-def MoveOnPath():
-    rospy.init_node('MoveOnPath', anonymous=True)
+def servo_control():
+    rospy.init_node('servo_control', anonymous=True)
     rospy.Subscriber('/cmd_vel', Twist, callback_vel) 
     rate = rospy.Rate(10)
     
     rospy.sleep(0.1)
     while not rospy.is_shutdown():
+        if rospy.Time.now() - last_cmd_time > CMD_TIMEOUT:
+            stop() 
+            rospy.logwarn_throttle(1.0, "cmd_vel timeout → stopping robot")
+            rate.sleep()
+            continue
+            
         if (lin_velocity<0):
             wheel_steer, wheel_velocity = servo_ackerman(lin_velocity, ang_velocity) 
                 # set correct servo values
@@ -160,7 +159,7 @@ def MoveOnPath():
             rate.sleep()
             rospy.loginfo("pressed down")
         else:
-            if (abs(ang_velocity) < 0.05 and abs(lin_velocity) < 0.05):
+            if (abs(ang_velocity) < 0.05 and abs(lin_velocity) < 0.02):
                 stop()
                 rospy.loginfo("At location.")
             else:
@@ -178,6 +177,6 @@ def MoveOnPath():
         
 if __name__ == '__main__': 
      try:
-         MoveOnPath()
+         servo_control()
      except rospy.ROSInterruptException:
         pass
